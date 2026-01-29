@@ -2,15 +2,12 @@ import Adw from "gi://Adw";
 import Gio from "gi://Gio";
 import Gtk from "gi://Gtk";
 
-import {
-  ExtensionPreferences,
-  getSettings,
-} from "resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js";
+import { ExtensionPreferences } from "resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js";
 
 export default class DesktopZoomPreferences extends ExtensionPreferences {
   fillPreferencesWindow(window) {
     // 1. Get Settings
-    // We use 'this.getSettings()' provided by the class
+    // We use 'this.getSettings()' provided by the class instance
     const extensionSettings = this.getSettings();
 
     const magnifierSettings = new Gio.Settings({
