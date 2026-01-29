@@ -1,129 +1,133 @@
-'use strict';
+import Clutter from "gi://Clutter";
+import Gio from "gi://Gio";
+import GLib from "gi://GLib";
+import GObject from "gi://GObject";
+import St from "gi://St";
 
-/* TODO: Settings panel:
- *  * Set tstate
- * 
- * TODO: Doesn't work when cursor is over a window
- * 
- * TODO: Nearest neighbor feasibility
- */
+import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
+import * as Main from "resource:///org/gnome/shell/ui/main.js";
 
+// The modifier key (Alt)
+const TSTATE = Clutter.ModifierType.MOD1_MASK;
 
-const { panelMenu, extensionSystem, main } = imports.ui;
-const { lang, signals } = imports;
-const ExtensionUtils = imports.misc.extensionUtils;
+// A helper class to handle the scroll events
+class DesktopZoomGestureAction {
+  constructor(actor, settings, magnifierSettings, a11ySettings) {
+    this._actor = actor;
+    this._settings = settings;
+    this._magnifierSettings = magnifierSettings;
+    this._a11ySettings = a11ySettings;
 
-const {
-  GObject,
-  GLib,
-  Gio,
-  St,
-  Clutter,
-} = imports.gi
+    this._scrollTimer = GLib.get_monotonic_time();
 
-let magnifierSettings
-let extensionSettings
-let a11ySettings
-let mag_factor
-let mag_factor_delta
-let enable_on_scroll
+    // Connect the scroll event
+    this._gestureCallbackID = this._actor.connect(
+      "scroll-event",
+      this._handleEvent.bind(this),
+    );
+  }
 
-const tstate = Clutter.ModifierType.MOD1_MASK
+  _handleEvent(actor, event) {
+    // Check if Alt (MOD1) is held down
+    if (
+      (event.get_state() & TSTATE) === TSTATE &&
+      event.get_scroll_direction() === Clutter.ScrollDirection.SMOOTH
+    ) {
+      // Get current settings
+      let magFactor = this._magnifierSettings.get_double("mag-factor");
+      let magFactorDelta = this._settings.get_double("mag-factor-delta");
+      let enableOnScroll = this._settings.get_boolean("enable-on-scroll");
 
+      // Debounce/Timer check (optional, kept from original logic)
+      const now = GLib.get_monotonic_time();
+      this._scrollTimer = now;
 
-const DesktopZoomGestureAction = new lang.Class({
-  Name: 'DesktopZoomGestureAction',
+      // Calculate new zoom level
+      // delta_y is usually at index 1
+      const v = event.get_scroll_delta()[1];
+      magFactor = Math.max(1.0, magFactor - v * magFactorDelta);
 
-  _init: function(actor) {
-    this._gestureCallbackID2 = actor.connect('scroll-event', lang.bind(this, this._handleEvent));
-    this.dragState = 0
-    this.dragAction = null
-    //this.virtualMouse = Clutter.DeviceManager.get_default().create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE)
-    this.grabbedMouse = null
-    this.scrollTimer = GLib.get_monotonic_time()
-  },
+      console.log(`[Desktop Zoom] Factor: ${magFactor}`);
 
-  _handleEvent: function(actor, event) {
-    if ((event.get_state() & tstate) === tstate &&
-      event.get_scroll_direction() === Clutter.ScrollDirection.SMOOTH) {
-      
-      mag_factor = magnifierSettings.get_double('mag-factor')
-      const now = GLib.get_monotonic_time()
-      const dt = now - this.scrollTimer
-      this.scrollTimer = now
-      const v = event.get_scroll_delta()[1]
-      mag_factor = Math.max(1.0, mag_factor - (v * mag_factor_delta))
-      
-      print(mag_factor)
-      if (enable_on_scroll) {
-        magnifierSettings.set_double('mag-factor', mag_factor)
-        if (mag_factor <= 1.005) {
-          print('Disabling accessibility magnifier')
-          a11ySettings.set_boolean('screen-magnifier-enabled', false)
-        } else if (!St.Settings.get().magnifier_active) {
-          print('Enabling accessibility magnifier')
-          //mag_factor = 1.0
-          a11ySettings.set_boolean('screen-magnifier-enabled', true)
+      if (enableOnScroll) {
+        this._magnifierSettings.set_double("mag-factor", magFactor);
+
+        // If we are basically at 1.0, disable the magnifier to save resources
+        if (magFactor <= 1.005) {
+          this._a11ySettings.set_boolean("screen-magnifier-enabled", false);
+        } else if (!Main.magnifier.isActive()) {
+          // Note: accessing Main.magnifier directly is safer than St.Settings for active state
+          this._a11ySettings.set_boolean("screen-magnifier-enabled", true);
         }
-      } else if (St.Settings.get().magnifier_active) {
-        magnifierSettings.set_double('mag-factor', mag_factor)
+      } else if (Main.magnifier.isActive()) {
+        this._magnifierSettings.set_double("mag-factor", magFactor);
       } else {
-        return false
+        return Clutter.EVENT_PROPAGATE; // Let other actors handle it
       }
-      
-      return true;
+
+      return Clutter.EVENT_STOP; // Stop event propagation (we handled it)
     }
-    
-    return false
-  },
 
-  _cleanup: function() {
-    global.stage.disconnect(this._gestureCallbackID);
-    global.stage.disconnect(this._gestureCallbackID2);
-  }
-});
-
-class Extension {
-  constructor() {
+    return Clutter.EVENT_PROPAGATE;
   }
 
-  enable() {
-    extensionSettings = ExtensionUtils.getSettings('org.gnome.shell.extensions.desktop-zoom')
-    magnifierSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.magnifier' })
-    a11ySettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' })
-    
-    mag_factor = 1.0
-    magnifierSettings.set_double('mag-factor', mag_factor)
-    a11ySettings.set_boolean('screen-magnifier-enabled', false)
-    
-    //mag_factor = magnifierSettings.get_double('mag-factor')
-    mag_factor_delta = extensionSettings.get_double('mag-factor-delta')
-    enable_on_scroll = extensionSettings.get_boolean('enable-on-scroll')
-
-    extensionSettings.connect('changed::mag-factor-delta', () => {
-      mag_factor_delta = extensionSettings.get_double('mag-factor-delta')
-    })
-    extensionSettings.connect('changed::enable-on-scroll', () => {
-      enable_on_scroll = extensionSettings.get_boolean('enable-on-scroll')
-    })
-
-    signals.addSignalMethods(DesktopZoomGestureAction.prototype);
-    this.gestureHandler = new DesktopZoomGestureAction(global.stage);
-  }
-
-  disable() {
-    mag_factor = 1.0
-    magnifierSettings.set_double('mag-factor', mag_factor)
-    a11ySettings.set_boolean('screen-magnifier-enabled', false)
-    
-    this.gestureHandler._cleanup();
-    extensionSettings = null;
-    magnifierSettings = null;
-    a11ySettings = null;
-    this.gestureHandler = null;
+  destroy() {
+    if (this._actor && this._gestureCallbackID) {
+      this._actor.disconnect(this._gestureCallbackID);
+      this._gestureCallbackID = null;
+    }
   }
 }
 
-function init() {
-  return new Extension()
+// The Main Extension Class
+export default class DesktopZoomExtension extends Extension {
+  enable() {
+    console.log("[Desktop Zoom] Enabling...");
+
+    // 1. Get Settings
+    this._settings = this.getSettings();
+
+    // For system settings (magnifier/a11y), we still need direct Gio.Settings
+    this._magnifierSettings = new Gio.Settings({
+      schema_id: "org.gnome.desktop.a11y.magnifier",
+    });
+    this._a11ySettings = new Gio.Settings({
+      schema_id: "org.gnome.desktop.a11y.applications",
+    });
+
+    // 2. Reset zoom to 1.0 on load (optional, based on original code)
+    this._magnifierSettings.set_double("mag-factor", 1.0);
+    this._a11ySettings.set_boolean("screen-magnifier-enabled", false);
+
+    // 3. Initialize the gesture handler on the global stage
+    // global.stage is the root actor of the shell
+    this._gestureHandler = new DesktopZoomGestureAction(
+      global.stage,
+      this._settings,
+      this._magnifierSettings,
+      this._a11ySettings,
+    );
+  }
+
+  disable() {
+    console.log("[Desktop Zoom] Disabling...");
+
+    // Reset zoom
+    if (this._magnifierSettings) {
+      this._magnifierSettings.set_double("mag-factor", 1.0);
+    }
+    if (this._a11ySettings) {
+      this._a11ySettings.set_boolean("screen-magnifier-enabled", false);
+    }
+
+    // Clean up handler
+    if (this._gestureHandler) {
+      this._gestureHandler.destroy();
+      this._gestureHandler = null;
+    }
+
+    this._settings = null;
+    this._magnifierSettings = null;
+    this._a11ySettings = null;
+  }
 }
