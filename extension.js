@@ -3,20 +3,24 @@ import Gio from "gi://Gio";
 import GLib from "gi://GLib";
 import GObject from "gi://GObject";
 import St from "gi://St";
+import Meta from "gi://Meta"; // Added Meta for debugging if needed
 
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 
-const TSTATE = Clutter.ModifierType.MOD1_MASK;
+// KEY SETTING:
+// MOD1 = Alt
+// MOD4 = Super (Windows Key)
+// CONTROL_MASK = Ctrl
+const ZOOM_MODIFIER = Clutter.ModifierType.MOD1_MASK;
 
 class DesktopZoomGestureAction {
   constructor(settings, magnifierSettings, a11ySettings) {
     this._settings = settings;
     this._magnifierSettings = magnifierSettings;
     this._a11ySettings = a11ySettings;
-    this._scrollTimer = GLib.get_monotonic_time();
 
-    // Use captured-event to catch input before DING or Windows see it
+    // Connect to the global stage capture phase
     this._gestureCallbackID = global.stage.connect(
       "captured-event",
       this._handleEvent.bind(this),
@@ -24,28 +28,25 @@ class DesktopZoomGestureAction {
   }
 
   _handleEvent(actor, event) {
-    // 1. Filter: We only care about Scroll events
+    // 1. Only care about SCROLL
     if (event.type() !== Clutter.EventType.SCROLL) {
       return Clutter.EVENT_PROPAGATE;
     }
 
-    // 2. Filter: Check for Alt Key (MOD1)
-    // Note: get_state() returns a bitmask. We check if the TSTATE bit is present.
-    if ((event.get_state() & TSTATE) === 0) {
+    // 2. CHECK MODIFIER (The "Gatekeeper")
+    // We use a bitwise AND. If Alt is held, the result is non-zero.
+    const state = event.get_state();
+    if ((state & ZOOM_MODIFIER) === 0) {
       return Clutter.EVENT_PROPAGATE;
     }
 
-    // 3. Filter: Check Direction (Smooth or Vertical)
+    // 3. LOGGING (To debug the "Window" issue)
+    // If we get here, we are scrolling while holding ALT.
+    // If you see this log when over the desktop, we have won.
+    // If you DO NOT see this log when over the desktop, System is stealing the input.
+    console.log("[Desktop Zoom] Alt+Scroll detected!");
+
     const direction = event.get_scroll_direction();
-    if (
-      direction !== Clutter.ScrollDirection.SMOOTH &&
-      direction !== Clutter.ScrollDirection.UP &&
-      direction !== Clutter.ScrollDirection.DOWN
-    ) {
-      return Clutter.EVENT_PROPAGATE;
-    }
-
-    // --- THE LOGIC ---
 
     let magFactor = this._magnifierSettings.get_double("mag-factor");
     let magFactorDelta = this._settings.get_double("mag-factor-delta");
@@ -54,26 +55,23 @@ class DesktopZoomGestureAction {
     // Calculate Delta
     let delta = 0;
     if (direction === Clutter.ScrollDirection.SMOOTH) {
-      delta = event.get_scroll_delta()[1]; // [dx, dy] - we want dy
+      delta = event.get_scroll_delta()[1];
     } else if (direction === Clutter.ScrollDirection.UP) {
       delta = -1;
     } else if (direction === Clutter.ScrollDirection.DOWN) {
       delta = 1;
+    } else {
+      return Clutter.EVENT_PROPAGATE;
     }
 
     // Apply Zoom
     magFactor = Math.max(1.0, magFactor - delta * magFactorDelta);
 
-    // Debug log to confirm it's working
-    console.log(`[Desktop Zoom] Event Captured! New Factor: ${magFactor}`);
-
     if (enableOnScroll) {
-      // Logic: If factor is basically 1.0, disable magnifier to save battery/performance
       if (magFactor <= 1.01) {
         if (Main.magnifier.isActive()) {
           this._a11ySettings.set_boolean("screen-magnifier-enabled", false);
         }
-        // Ensure we stick to 1.0 exactly when disabled
         this._magnifierSettings.set_double("mag-factor", 1.0);
       } else {
         if (!Main.magnifier.isActive()) {
@@ -83,12 +81,11 @@ class DesktopZoomGestureAction {
       }
     } else if (Main.magnifier.isActive()) {
       this._magnifierSettings.set_double("mag-factor", magFactor);
-    } else {
-      // Magnifier is off and enable-on-scroll is off -> Do nothing
-      return Clutter.EVENT_PROPAGATE;
     }
 
-    return Clutter.EVENT_STOP; // Stop DING or anyone else from seeing this event
+    // STOP PROPAGATION
+    // This prevents the event from reaching the window/DING/Desktop
+    return Clutter.EVENT_STOP;
   }
 
   destroy() {
@@ -101,8 +98,7 @@ class DesktopZoomGestureAction {
 
 export default class DesktopZoomExtension extends Extension {
   enable() {
-    console.log("[Desktop Zoom] Enabling (Captured Mode)...");
-
+    console.log("[Desktop Zoom] Enabled.");
     this._settings = this.getSettings();
     this._magnifierSettings = new Gio.Settings({
       schema_id: "org.gnome.desktop.a11y.magnifier",
@@ -110,9 +106,6 @@ export default class DesktopZoomExtension extends Extension {
     this._a11ySettings = new Gio.Settings({
       schema_id: "org.gnome.desktop.a11y.applications",
     });
-
-    // REMOVED: The lines that reset zoom to 1.0 on enable.
-    // Now it preserves your current zoom state.
 
     this._gestureHandler = new DesktopZoomGestureAction(
       this._settings,
@@ -122,14 +115,11 @@ export default class DesktopZoomExtension extends Extension {
   }
 
   disable() {
-    console.log("[Desktop Zoom] Disabling...");
-
-    // Cleanup only
+    console.log("[Desktop Zoom] Disabled.");
     if (this._gestureHandler) {
       this._gestureHandler.destroy();
       this._gestureHandler = null;
     }
-
     this._settings = null;
     this._magnifierSettings = null;
     this._a11ySettings = null;
