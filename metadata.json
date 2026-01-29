@@ -4,5 +4,6 @@
   "description": "Scroll to zoom gnome desktop.\n\nUsage: Hold Alt and Scroll\n\nCursor must not be over a window (must be over background or top bar).\nMagnifier / zoom must be enabled in accessibility.",
   "version": 4,
   "shell-version": ["45", "46"],
-  "url": "https://github.com/IbrahimMohamed2001/desktop-zoom-gnome-shell"
+  "url": "https://github.com/IbrahimMohamed2001/desktop-zoom-gnome-shell",
+  "settings-schema": "org.gnome.shell.extensions.desktop-zoom"
 }
