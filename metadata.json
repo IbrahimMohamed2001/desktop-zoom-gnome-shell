@@ -1,5 +1,5 @@
 {
-  "uuid": "desktop-zoom@IbrahimMohamed",
+  "uuid": "desktop-zoom@ibrahimmohamed",
   "name": "Desktop Zoom",
   "description": "Scroll to zoom gnome desktop.\n\nUsage: Hold Alt and Scroll\n\nCursor must not be over a window (must be over background or top bar).\nMagnifier / zoom must be enabled in accessibility.",
   "version": 4,
